@@ -18,7 +18,7 @@ library(nnet)
 library(ggplot2)
 library(marginaleffects)
 library(ggplot2)
-
+sdfsdfdsfd
 ```
 
 ## 1. Factors and Ordering.
