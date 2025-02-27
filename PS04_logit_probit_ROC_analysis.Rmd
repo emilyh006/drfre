@@ -1,0 +1,337 @@
+---
+title: "PS04 by Emily Han"
+output:
+  pdf_document: default
+date: "`r Sys.Date()`"
+--- 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+
+```{r}
+# Loading library 
+suppressMessages({
+  library(caret)
+  library(huxtable)
+  library(pROC)
+  library(ROCR)
+  library(MASS)
+  library(separationplot)
+  library(ggplot2)})
+
+```
+
+
+## 1. Fearon & Laitin
+
+You will need to download the file flmdw.csv and load it into your workspace. This is the data needed to replicate the analysis in Fearon & Laitin’s 2003 APSR paper. The data are country-year data, but we will be ignoring the time component for the purposes of this exercise.
+
+You will analyze the Fearon & Laitin data on civil war onset, specifically, the binary onset variable.
+
+```{r}
+#Loading the dataset
+dat <- read.csv("./data/flmdw.csv")
+```
+
+### a. Examine the distribution of onset. Is this a “rare event”? What options might you consider?
+
+```{r}
+table(dat$onset)
+```
+
+Yes, onset is a rare event since it only occur for 106 times out of 6296 observations which is only 1.68%. We need to consider a regression that accounts for the class imbalance.
+
+---
+
+
+### b. Fit at least four models that predict binary onset. Analyze only complete cases and make sure that all three models are fit to the same observations but be careful how you remove NAs
+
+
+Model 1 should be a logistic regression including only an intercept, GDP per capita (gdpenl), population (lpopl1) and percent mountainous (lmtnest).
+
+```{r}
+logit_mod <- glm(onset ~ gdpenl + lpopl1 + lmtnest, family = binomial (link = 'logit'), data = dat)
+```
+
+Model 2 should be a probit regression but otherwise identical to model 1.
+
+```{r}
+probit_mod <- glm(onset ~ gdpenl + lpopl1 + lmtnest, family = binomial (link = 'probit'), data = dat)
+```
+
+Model 3 should be a probit regression that adds a dummy variable for whether a country is an oil exporter (Oil), democracy (polity2l), and religious fractionalization (relfrac).
+
+```{r}
+probit_dummy_mod <- glm(onset ~ gdpenl + lpopl1 + lmtnest + Oil + polity2l + relfrac, family = binomial (link = 'probit'), data = dat)
+```
+
+Model 4 should be a probit regression that includes an interaction between polity2l and relfrac.
+
+```{r}
+probit_inter_mod <- glm(onset ~ gdpenl + lpopl1 + lmtnest + Oil + polity2l + relfrac + (relfrac * polity2l), family = binomial (link = 'probit'), data = dat)
+
+```
+
+
+Feel free to fit additional models that explore different distributional assumptions or covariates. Present the results from all four models in a well-formatted, publication-quality regression table. Write a paragraph summarizing the information you put in the table. The gt, modelsummary and stargazer packages may help. Based on in-sample model fit, which model(s) appears to be the most promising?
+
+
+
+```{r, results='asis'}
+#Models' summary
+
+huxreg(list("Logit Model" = logit_mod, "Probit Model" = probit_mod, "Probit w/ Dummy" = probit_dummy_mod, "Probit w/ Interaction" = probit_inter_mod))
+```
+
+
+The table compares four models predicting civil war onset. Models 1 (Logit) and 2 (Probit) show that higher GDP reduces conflict risk, while larger populations and mountainous terrain increase it. Model 3 (Probit w/ Dummy) adds oil exports, democracy, and religious diversity, showing that oil-exporting countries face higher conflict risk, while democracy has a small, positive effect. Model 4 (Probit w/ Interaction) introduces an interaction between democracy and religious diversity, but the effect is not statistically significant. Across all 4 models, Model 3 and Model 4 seems the most promising. While Model 4 has the lowest AIC and highest log-likelihood, its improvement in comparison to the Model 3 is modest, making it unclear whether it provides to be a significantly better fit.
+
+
+---
+
+
+### c. Develop ROC plot and separation plots comparing the in-sample fit of your estimated models. The ROCR library may help
+
+
+```{r}
+predicted_logit <-fitted(logit_mod)
+predicted_probit <- fitted(probit_mod)
+predicted_probit_dummy <- fitted(probit_dummy_mod) 
+predicted_probit_inter <- fitted(probit_inter_mod) 
+
+actual <- as.vector(logit_mod$model$onset)
+
+pred_logit <- prediction(predicted_logit,actual)
+perf_logit <- performance(pred_logit,"tpr","fpr")
+
+pred_probit <- prediction(predicted_probit,actual)
+perf_probit <- performance(pred_probit,"tpr","fpr")
+
+pred_probit_dummy <- prediction(predicted_probit_dummy,actual)
+perf_probit_dummy <- performance(pred_probit_dummy,"tpr","fpr")
+
+pred_probit_inter <- prediction(predicted_probit_inter,actual)
+perf_probit_inter <- performance(pred_probit_inter,"tpr","fpr")
+```
+
+
+```{r}
+# Plotting the ROC
+par(las=1, bty="n")  
+plot(perf_logit, main="ROC plots for competing models", bty="n",lwd=2, col = 'purple')
+plot(perf_probit, lwd=2, col= 'lightgreen', add=T)
+plot(perf_probit_dummy, lwd=2, col= 'lightblue', add=T)
+plot(perf_probit_inter, lwd=2, col= 'red', add=T)
+lines(actual,actual, lty="dashed")
+
+legend("bottomright", legend = c("logistic_reg", "probit_reg", "probit_dummy", "probit_inter"), fill = c("purple", "lightgreen", "lightblue", "red"))
+```
+
+
+```{r}
+# Seperation Plot 
+pred_logit_v <- pred_logit@predictions[[1]]
+pred_probit_v <-pred_probit@predictions[[1]]
+pred_probit_dummy_v <- pred_probit_dummy@predictions[[1]]
+pred_probit_inter_v <- pred_probit_inter@predictions[[1]]
+
+
+separationplot(pred_logit_v, actual,
+               heading = "Logit Model",
+               height = 1, width = 2,
+               col1 = "black", 
+               lwd1 = 1, lwd2 = 1)
+```
+
+
+```{r}
+separationplot(pred_probit_v, actual,
+               heading = "Probit Model",
+               height = 1, width = 2,
+               col1 = "black", 
+               lwd1 = 1, lwd2 = 1)
+```
+
+
+```{r}
+separationplot(pred_probit_dummy_v, actual,
+               heading = "Probit Model with Dummy Variables",
+               height = 1, width = 2,
+               col1 = "black", 
+               lwd1 = 1, lwd2 = 1)
+```
+
+
+```{r}
+separationplot(pred_probit_inter_v, actual,
+               heading = "Probit Model with Interaction",
+               height = 1, width = 2,
+               col1 = "black", 
+               lwd1 = 1, lwd2 = 1)
+
+
+```
+
+---
+
+### d. 
+Using model 4 and a likelihood ratio test, what is the evidence that we can leave polity2l out of the model entirely? In other words, test the hypothesis that $\beta_{dem} = \beta_{demfrac} = 0$
+.
+```{r}
+mod5 <- glm(onset ~ gdpenl + lpopl1 + lmtnest + Oil + relfrac, data = dat,
+            family = "binomial"(link = "probit"))
+
+
+ll_ratio <- logLik(mod5) - logLik(probit_inter_mod)
+ll_ratio_stat <- -2 * (ll_ratio)
+
+
+# Computing the p-value
+df <- length(coef(probit_inter_mod)) - length(coef(mod5))
+p_value <- 1 - pchisq(ll_ratio_stat, df)
+
+
+cat("P-vale:", p_value)
+```
+
+The likelihood ratio test suggest the the model with polity2l fit significantly better then the model without. Therefore, we shouldn't leave polity2l out of the model. 
+
+---
+
+### e. 
+Undertake a 10-fold cross-validation of each of these models. Construct an ROC plot of the out of sample predictive performance of each of the models. To do this you can write code to create the 10 folds or you can try and work with the tools in many R libraries that implement cross-validation. These include: cvTools, caret, tidymodels/resampling. On the basis of this analysis, which model(s) do you prefer?
+
+```{r}
+dat1 <-read.csv("./data/flmdw.csv")
+dat1$onset <- as.factor(dat1$onset)
+levels(dat1$onset) <- c("no", "yes")
+```
+
+
+```{r}
+# Define 10-fold cross-validation
+cv_control <- trainControl(method = "cv", number = 10, 
+                           classProbs = TRUE, summaryFunction = twoClassSummary, 
+                           savePredictions = "final")
+
+# Train Logit model with 10-fold CV
+cv_logit <- train(onset ~ gdpenl + lpopl1 + lmtnest, data = dat1, 
+                  method = "glm", family = binomial(link = "logit"), 
+                  trControl = cv_control, metric = "ROC")
+
+# Train Probit model with 10-fold CV
+cv_probit <- train(onset ~ gdpenl + lpopl1 + lmtnest, data = dat1, 
+                   method = "glm", family = binomial(link = "probit"), 
+                   trControl = cv_control, metric = "ROC")
+
+# Train Probit Dummy model with 10-fold CV
+cv_probit_dummy <- train(onset ~ gdpenl + lpopl1 + lmtnest + Oil + polity2l + relfrac,
+                         data = dat1, method = "glm", family = binomial(link = "probit"),
+                         trControl = cv_control, metric = "ROC")
+
+# Train Probit Interaction model with 10-fold CV
+cv_probit_inter <- train(onset ~ gdpenl + lpopl1 + lmtnest + Oil + polity2l + relfrac + (relfrac * polity2l), 
+                         data = dat1, method = "glm", family = binomial(link = "probit"),
+                         trControl = cv_control, metric = "ROC")
+
+# Extract Out-of-Sample ROC Data
+roc_logit <- roc(cv_logit$pred$obs, cv_logit$pred$yes)   # Logit model OOS predictions
+roc_probit <- roc(cv_probit$pred$obs, cv_probit$pred$yes) # Probit model OOS predictions
+roc_probit_dummy <- roc(cv_probit_dummy$pred$obs, cv_probit_dummy$pred$yes)   
+roc_probit_inter <- roc(cv_probit_inter$pred$obs, cv_probit_inter$pred$yes)
+```
+
+
+```{r}
+# Plot ROC Curves for Logit vs Probit (10-Fold CV)
+plot(roc_logit, col = "blue", lwd = 2, main = "ROC Curve: Logit vs Probit (10-Fold CV)")
+plot(roc_probit, col = "red", lwd = 2, add = TRUE, lty = 1)
+plot(roc_probit_dummy, col = "green", lwd = 2, add = TRUE, lty = 1)
+plot(roc_probit_inter, col = "purple", lwd = 2, add = TRUE, lty = 1)
+
+
+# Add legend
+legend("bottomright", legend = c("Logit Model", "Probit Model", "Probit with Dummy Model", "Probit with Interaction Model"), 
+       col = c("blue", "red", "green", "purple"), lty = c(1, 2), lwd = 1, bty = "n")
+
+# Print AUC values for model comparison
+logit_auc <- auc(roc_logit)
+probit_auc <- auc(roc_probit)
+probit_dummy_auc <- auc(roc_probit_dummy)
+probit_inter_auc <- auc(roc_probit_inter)
+
+# Print results
+cat("Logit AUC:", logit_auc, "\n")
+cat("Probit AUC:", probit_auc, "\n")
+cat("Probit with Dummy AUC:", probit_dummy_auc, "\n")
+cat("Probit with Interaction AUC:", probit_inter_auc, "\n")
+
+```
+
+Based on the analysis, I prefer the probit model with dummy variables as it outperforms the two baseline models (logit and standard probit) while achieving an AUC score (0.718) close to the model with interaction (0.72). Since the analysis suggests the interaction term does not significantly improve predictive performance, the probit with dummy variables provides a better balance between accuracy and model simplicity, making it the preferred choice for predicting civil war onset.
+
+---
+
+### f.
+
+Interpret the relationship between civil war onset and democracy in the preferred model. Use a visual presentation of the model predictions and be sure to display the estimation uncertainty around the expected values produced by the model. Be sure to clearly state the scenarios you chose and why. If the best performing model includes the interaction term then provide a plot that interprets that conditional relationship.
+
+
+
+Based on the cross-validation analysis, I chose the probit model with dummy variables as the best performing model as the model is simpler in comparison to the model with interaction while yielding the similar predictive peformance.  
+
+
+"probit_dummy_mod <- glm(onset ~ gdpenl + lpopl1 + lmtnest + Oil + polity2l + relfrac, family = binomial (link = 'probit'), data = dat)"
+
+```{r}
+#Democracy status of a country 
+democracy <- seq(min(dat1$polity2l), max(dat1$polity2l), length.out = 1000)
+
+# Drawing 1000 coefficients 
+simulated_betas <- mvrnorm(1000, coef(probit_dummy_mod), vcov(probit_dummy_mod))
+
+# baseline scenario 
+X <- cbind(1, 
+           mean(dat$gdpenl), 
+           mean(dat$lpopl1), 
+           mean(dat$lmtnest), 
+           median(dat$Oil), 
+           democracy,  # This column varies
+           median(dat$relfrac))
+
+
+#Calculate predicted probability 
+prob_pred <- pnorm(simulated_betas %*% t(X)  )
+prob_quantile <- apply(prob_pred, 2, function(x) quantile(x, c(0.025, 0.5, 0.975)))
+
+
+
+# Basic Plot Setup
+plot(democracy, prob_quantile[2, ], ylim = range(prob_quantile[1, ], prob_quantile[3, ]), 
+     xlab = "Democracy Status Score",
+     ylab = "Predicted Probability",
+     main = "Effect of Democracy Status on Civil Onset", 
+     bty = "n",
+     col = "white"
+)
+
+
+polygon(x = c(democracy, rev(democracy)),
+        y = c(prob_quantile[1, ], rev(prob_quantile[3, ])),
+        col = grey(0.8), border = NA)
+
+lines(democracy, prob_quantile[2, ], lwd = 2)
+```
+
+---
+
+
+## Use of ChatGPT and other generative AI tools
+
+I certify that I did not use any LLM or generative AI tool in this assignment!
+
+```{r}
+sessionInfo()
+```

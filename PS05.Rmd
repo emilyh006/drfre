@@ -1,0 +1,241 @@
+---
+title: "PS05"
+author: "Emily Han"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(MASS)
+library(huxtable)
+library(caret)
+library(ordinal)
+library(nnet)
+library(ggplot2)
+library(marginaleffects)
+library(ggplot2)
+
+```
+
+## 1. Factors and Ordering.
+
+Run the following three lines of $R$ code and explain your results.
+
+```{r}
+income<-ordered(c("Mid","High","Low")) 
+income 
+as.numeric(income)
+```
+
+The `ordered()` function converts a character vector into an ordered factor, but by default, it organizes the factor levels alphabetically instead of following the intended hierarchy. The `as.numeric()` function then assigns integer codes to these factor levels based on the alphabetical order, rather than the correct hierarchical ranking. Therefore, in both cases, it results in incorrect hierarchical order.
+
+---
+
+## 2. Ordered categorical responses
+
+For this exercise you will need to load the file `drury_jpr_data.csv`.
+
+```{r}
+dat <- read.csv("./data/drury_jpr_data.csv")
+```
+
+### a.
+
+Using Drury’s data, use an ordered logit regression to evaluate the success of economic sanctions (result). Fit two models. The first model should include the (log) GNP ratio (gnprat), amount of trade (trade), target GNP cost (tarcst), sender cost (cost), and whether there is a cooperative relationship (coop). The second model should leave out two of the covariates of your choosing. Present the models in a well-formatted table and then evaluate which model is preferred on an in-sample and out-of-sample fit basis. You can find the polr() function in the MASS libray. The rms library also has ordered logit functionality.
+
+```{r}
+mod1 <- polr(as.ordered(result) ~ log(gnprat) + trade + tarcst + cost + coop, 
+             data = dat, method = "logistic", Hess = TRUE)
+
+mod2 <- polr(as.ordered(result) ~ trade + tarcst + coop, 
+             data = dat, method = "logistic", Hess = TRUE)
+```
+
+```{r, warning=FALSE, results = 'asis'}
+#Models' summary
+huxreg(list("Full Model" = mod1, "Simple Model" = mod2))
+```
+```{r}
+ll_ratio_stat <- -2 * (logLik(mod2) - logLik(mod1))
+df <- length(coef(mod1)) - length(coef(mod2))
+p_value <- 1 - pchisq(ll_ratio_stat, df)
+
+cat("Likelihood Ratio Statistic:", ll_ratio_stat, "\n")
+cat("P-vale:", p_value)
+```
+
+
+```{r}
+# Data Prep
+dat1 <- read.csv("./data/drury_jpr_data.csv")
+dat1$result <- factor(dat1$result, 
+                     levels = c(1, 2, 3, 4), 
+                     labels = c("Low", "MidLow", "MidHigh", "High")) 
+
+table(dat1$result)
+```
+
+
+```{r}
+cv_control <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+
+cv_full <- train(as.ordered(result) ~ log(gnprat) + trade + tarcst + cost + coop,
+                 data = dat1,
+                 method = "polr",
+                 trControl = cv_control)
+
+cv_sim <- train(as.ordered(result) ~ trade + tarcst + coop,
+                 data = dat1,
+                 method = "polr",
+                 trControl = cv_control)
+
+cat("\nThe average accuracy of the full model:", round(mean(cv_full$results$Accuracy), 4), "\n")
+cat("The average accuracy of the simple model:", round(mean(cv_sim$results$Accuracy), 4), "\n")
+
+```
+Both likelihood ratio test and lower AIC value suggest that the simple model is a better fit in evaluating the success of economic sanctions. The out-sample cross-validation also suggests that the simple model result in higher accuracy. However, the warning suggests that we should interpret the out-of-sample accuracy with caution, as these issues might affect the reliability of cross-validation estimates.  
+
+### b.
+
+For the better performing of your two models, choose a particular predictor variable and develop a set of scenarios to interpret how that variable relates to the outcome. Be sure to clearly state what your quantity of interest is. Construct a graphical display that presents this interpretive quantity; be sure to include some estimate of your uncertainty around this quantity. In constructing this, use explicit code similar to that on p. 151.
+
+```{r}
+# Scenario 
+X.low <- cbind(
+  trade = mean(dat$trade), 
+  tarcst = mean(dat$tarcst),
+  coop = 1 
+)
+
+X.high <- cbind(
+  trade = mean(dat$trade), 
+  tarcst = mean(dat$tarcst),
+  coop = 4 
+)
+
+```
+
+```{r}
+# Simulate coefficient draws for uncertainty estimation
+draws <- mvrnorm(1000, c(coef(mod2), mod2$zeta), solve(mod2$Hessian))
+B <- draws[, 1:length(coef(mod2))]  # Extract coefficients
+Taus <- draws[, (length(coef(mod2)) + 1):ncol(draws)]  # Extract cutpoints
+
+# Predicted probabilities for coop = 1 and coop = 4
+# Compute predicted probabilities for each class
+pi.class1.sc1 <- plogis(Taus[, 1] - B %*% t(X.low))  # Pr(Y = 1)
+pi.class1.sc2 <- plogis(Taus[, 1] - B %*% t(X.high))
+
+pi.class2.sc1 <- plogis(Taus[, 2] - B %*% t(X.low)) - plogis(Taus[, 1] - B %*% t(X.low))  # Pr(Y = 2)
+pi.class2.sc2 <- plogis(Taus[, 2] - B %*% t(X.high)) - plogis(Taus[, 1] - B %*% t(X.high))
+
+pi.class3.sc1 <- plogis(Taus[, 3] - B %*% t(X.low)) - plogis(Taus[, 2] - B %*% t(X.low))  # Pr(Y = 3)
+pi.class3.sc2 <- plogis(Taus[, 3] - B %*% t(X.high)) - plogis(Taus[, 2] - B %*% t(X.high))
+
+pi.class4.sc1 <- 1 - plogis(Taus[, 3] - B %*% t(X.low))  # Pr(Y = 4)
+pi.class4.sc2 <- 1 - plogis(Taus[, 3] - B %*% t(X.high))
+
+# Compute first difference in probabilities
+fd.class1 <- pi.class1.sc2 - pi.class1.sc1
+fd.class2 <- pi.class2.sc2 - pi.class2.sc1
+fd.class3 <- pi.class3.sc2 - pi.class3.sc1
+fd.class4 <- pi.class4.sc2 - pi.class4.sc1
+
+plot(density(fd.class1, adjust=1.5),
+     xlim = c(-0.75, 0.75), ylim = range(density(fd.class1)$y, density(fd.class2)$y,density(fd.class3)$y, density(fd.class4)$y),
+     xlab = "Change in Predicted Probability",
+     col = "black", bty = "n",
+     yaxt = "n", lwd = 2, main = "", ylab = "")
+
+lines(density(fd.class2, adjust=1.5), col=grey(0.5), lwd=2, lty=2)
+lines(density(fd.class3, adjust=1.5), col="blue", lwd=2, lty=3)
+lines(density(fd.class4, adjust=1.5), col="red", lwd=2, lty=4)
+
+text(x=0.1, y=4, labels="Pr(Low Sanction Success | High Coop) - Pr(Low Sanction Success | Low Coop)", cex=0.6, adj=0)
+text(x=0.1, y=6, labels="Pr(MidLow Sanction Success | High Coop) - Pr(MidLow Sanction Success | Low Coop)", cex=0.6, adj=0, col=grey(0.5))
+text(x=0.1, y=8, labels="Pr(MidHigh Sanction Success | High Coop) - Pr(MidHigh Sanction Success | Low Coop)", cex=0.6, adj=0, col="blue")
+text(x=0.1, y=10, labels="Pr(High Sanction Success | High Coop) - Pr(High Sanction Success| Low Coop)", cex=0.6, adj=0, col="red")
+```
+
+
+### c
+
+Use the same linear specification as in (b) but fit an OLS model. Is the ordered logit to be preferred over the OLS?
+
+```{r}
+dat$result <- as.numeric(dat$result)
+lm_model <- lm(result ~ trade + tarcst  + coop, 
+             data = dat)
+
+cat("AIC Value for lm model:", AIC(lm_model), "\n")
+cat("AIC Value for ordinal logit model:", AIC(mod2), "\n")
+```
+
+Significantly higher AIC value of the OLS model suggests that the ordered logit is a better fit in comparison to the OLS model.
+
+### d.
+
+Use the same linear specification as in (b) but fit the model as a multinomial logit. Evaluate whether the parallel regressions assumption holds for the ordered logit model. The multinom() function in the nnet library fits multinomial logit. You might also consider the mlogit library.
+
+
+
+```{r}
+mnl_mod <- multinom(as.factor(result) ~  trade + tarcst + coop,
+                      Hess=T, model=T, data=dat, maxit=200)
+
+
+ll_ratio_stat2 <- -2 * (logLik(mod2) - logLik(mnl_mod))
+df2 <- length(coef(mnl_mod)) - length(coef(mod2))
+p_value2 <- 1 - pchisq(ll_ratio_stat2, df2)
+cat("Likelihood Ratio Statistic:", ll_ratio_stat2, "\n")
+cat("P-vale:", p_value2)
+```
+The parallel regression assumption holds because the likelihood ratio suggest that the more flexible multinomial logit did not have significant improvement.
+
+### e.
+
+Using the scenario you devised in (b), provide an interpretation of the MNL version of the model that you just fit. This time use the marginaleffects library.
+
+```{r}
+# Compute first differences for changing "coop" from 1 to 4
+fd <- comparisons(
+    mnl_mod,
+    newdata = datagrid(coop = c(1, 4)),  # Define scenarios
+    variables = "coop",  # Variable to compute first differences
+    type = "probs",
+    contrast = "difference" 
+)
+
+print(fd)
+
+# Default density plot (keeping multiple peaks)
+ggplot(fd, aes(x = estimate, fill = as.factor(group))) +
+  geom_density(alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  scale_fill_manual(values = c("black", "red", "blue", "white")) +
+  labs(x = "Change in Predicted Probability",
+       y = "Density",
+       title = "Density Plot of First Differences",
+       fill = "Outcome Category") +
+  theme_minimal()
+
+# Smoothed density plot (adjusting bandwidth)
+ggplot(fd, aes(x = estimate, fill = as.factor(group))) +
+  geom_density(alpha = 0.5, adjust = 2) +  # Increase adjust value for smoother plot
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  scale_fill_manual(values = c("black", "red", "blue", "white")) +
+  labs(x = "Change in Predicted Probability",
+       y = "Density",
+       title = "Smoothed Density Plot of First Differences",
+       fill = "Outcome Category") +
+  theme_minimal()
+
+
+```
+```{r}
+sessionInfo()
+```
